@@ -1,2 +1,2 @@
-import { defineConfig } from 'vite';
-export default defineConfig({ base: '/afterdrop/' });
+import { defineConfig } from "vite";
+export default defineConfig({ base: "/afterdrop/" });

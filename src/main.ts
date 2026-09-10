@@ -1,37 +1,697 @@
-import './style.css';
-import { Game, SHAPES, type Mode, type Piece } from './engine';
-import { Sound } from './audio';
-const app=document.querySelector<HTMLDivElement>('#app')!;
-const modes:Record<Mode,{name:string;tag:string;desc:string;icon:string}>={marathon:{name:'Marathon',tag:'THE CLASSIC',desc:'Settle in. Stack up. Go the distance.',icon:'∞'},sprint:{name:'Sprint',tag:'40 LINES',desc:'Forty lines. One clock. Your best time.',icon:'↗'},ultra:{name:'Ultra',tag:'2 MINUTES',desc:'Make every second count.',icon:'◷'},zen:{name:'Zen',tag:'NO PRESSURE',desc:'Slow it down. Find your rhythm.',icon:'✳'}};
-const palettes={citrus:['#8ecfe3','#f1d27d','#ba9ad8','#bdda83','#eb8c87','#8ca7e8','#e8ab76'],neon:['#55e5f1','#f0f46b','#bf89fa','#82f3b7','#fc7695','#7394fa','#ffb777'],mono:['#bdc8bd','#e8e9db','#a3b5aa','#d6ddc8','#97a39c','#b5c9be','#f3e6cb']};
-type Settings={theme:keyof typeof palettes; depth:boolean; ghost:boolean; motion:boolean; music:number; effects:number};
-function read<T>(key:string,fallback:T):T{try{return JSON.parse(localStorage.getItem(key)??'null')??fallback;}catch{return fallback;}}
-const settings:Settings={theme:'citrus',depth:true,ghost:true,motion:!matchMedia('(prefers-reduced-motion: reduce)').matches,music:35,effects:60,...read<Partial<Settings>>('afterdrop-settings',{})};
-if(!(settings.theme in palettes))settings.theme='citrus';
-let records=read<{mode:Mode;score:number;lines:number;time:number;date:string}[]>('afterdrop-records',[]);
-let selected:Mode='marathon', game:Game|null=null, paused=false, ended=false, screen='menu', last=0, gravity=0, grounded=0, lockResets=0;
-const sound=new Sound(); const keys=new Map<string,number>();let lastRepeat=0;
-function save(){try{localStorage.setItem('afterdrop-settings',JSON.stringify(settings));localStorage.setItem('afterdrop-records',JSON.stringify(records));}catch{}}
-function apply(){document.documentElement.dataset.motion=String(settings.motion);sound.music=settings.music/100;sound.effects=settings.effects/100;}
+import "./style.css";
+import { Game, SHAPES, type Mode, type Piece } from "./engine";
+import { Sound } from "./audio";
+const app = document.querySelector<HTMLDivElement>("#app")!;
+const modes: Record<
+  Mode,
+  { name: string; tag: string; desc: string; icon: string }
+> = {
+  marathon: {
+    name: "Marathon",
+    tag: "THE CLASSIC",
+    desc: "Settle in. Stack up. Go the distance.",
+    icon: "∞",
+  },
+  sprint: {
+    name: "Sprint",
+    tag: "40 LINES",
+    desc: "Forty lines. One clock. Your best time.",
+    icon: "↗",
+  },
+  ultra: {
+    name: "Ultra",
+    tag: "2 MINUTES",
+    desc: "Make every second count.",
+    icon: "◷",
+  },
+  zen: {
+    name: "Zen",
+    tag: "NO PRESSURE",
+    desc: "Slow it down. Find your rhythm.",
+    icon: "✳",
+  },
+};
+const palettes = {
+  citrus: [
+    "#8ecfe3",
+    "#f1d27d",
+    "#ba9ad8",
+    "#bdda83",
+    "#eb8c87",
+    "#8ca7e8",
+    "#e8ab76",
+  ],
+  neon: [
+    "#55e5f1",
+    "#f0f46b",
+    "#bf89fa",
+    "#82f3b7",
+    "#fc7695",
+    "#7394fa",
+    "#ffb777",
+  ],
+  mono: [
+    "#bdc8bd",
+    "#e8e9db",
+    "#a3b5aa",
+    "#d6ddc8",
+    "#97a39c",
+    "#b5c9be",
+    "#f3e6cb",
+  ],
+};
+type Settings = {
+  theme: keyof typeof palettes;
+  depth: boolean;
+  ghost: boolean;
+  motion: boolean;
+  music: number;
+  effects: number;
+};
+function read<T>(key: string, fallback: T): T {
+  try {
+    return JSON.parse(localStorage.getItem(key) ?? "null") ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+const settings: Settings = {
+  theme: "citrus",
+  depth: true,
+  ghost: true,
+  motion: !matchMedia("(prefers-reduced-motion: reduce)").matches,
+  music: 35,
+  effects: 60,
+  ...read<Partial<Settings>>("afterdrop-settings", {}),
+};
+if (!(settings.theme in palettes)) settings.theme = "citrus";
+let records = read<
+  { mode: Mode; score: number; lines: number; time: number; date: string }[]
+>("afterdrop-records", []);
+let selected: Mode = "marathon",
+  game: Game | null = null,
+  paused = false,
+  ended = false,
+  screen = "menu",
+  last = 0,
+  gravity = 0,
+  grounded = 0,
+  lockResets = 0;
+const sound = new Sound();
+const keys = new Map<string, number>();
+let lastRepeat = 0;
+function save() {
+  try {
+    localStorage.setItem("afterdrop-settings", JSON.stringify(settings));
+    localStorage.setItem("afterdrop-records", JSON.stringify(records));
+  } catch {}
+}
+function apply() {
+  document.documentElement.dataset.motion = String(settings.motion);
+  sound.music = settings.music / 100;
+  sound.effects = settings.effects / 100;
+}
 apply();
-const logo='<span class="mark"><i></i><i></i><i></i></span><span>AFTERDROP<span class="logo-dot">®</span></span>';
-function shell(){app.innerHTML=`<header><a class="brand" href="#" aria-label="Afterdrop home">${logo}</a><span class="header-note">A LITTLE ORDER. A LITTLE CHAOS.</span><button class="icon-btn" id="sound-toggle" aria-label="Toggle music">${settings.music?'♫':'♪'}</button></header><main id="main"></main><footer><span><i class="status-dot"></i> BUILT FOR THE FLOW STATE</span><span>INDEPENDENT ARCADE <b> / </b> VOL. 001</span><a href="https://github.com/platret/afterdrop" target="_blank" rel="noreferrer">SOURCE ↗</a></footer>`;document.querySelector('.brand')!.addEventListener('click',e=>{e.preventDefault();if(game&&!game.over&&screen==='game'){pause();return;}menu();});document.querySelector('#sound-toggle')!.addEventListener('click',async()=>{settings.music=settings.music?0:35;apply();save();await sound.unlock();if(!sound.timer && !paused)sound.start();document.querySelector('#sound-toggle')!.textContent=settings.music?'♫':'♪';});}
-function decorativeBlocks(){return '<div class="sculpture" aria-hidden="true">'+[[0,2,0],[1,2,0],[2,2,0],[2,1,0],[3,3,1],[4,3,1],[3,4,1],[4,4,1],[0,4,2],[1,4,2],[1,5,2],[2,5,2],[3,0,3],[3,1,3],[4,1,3],[5,1,3]].map(([x,y,c])=>`<i class="sculpture-block color-${c}" style="--x:${x};--y:${y}"></i>`).join('')+'</div>';}
-function menu(){screen='menu';game=null;paused=false;keys.clear();shell();document.querySelector('#main')!.innerHTML=`<section class="hero"><div class="hero-copy"><div class="eyebrow"><span class="small-line"></span> YOUR NEXT FAVORITE DISTRACTION</div><h1>Find your<br><em>flow.</em><span class="star">✳</span></h1><p>One more block. One more line.<br>A familiar feeling, in a whole new dimension.</p><div class="hero-meta"><span>01 — 04 GAME MODES</span><span>100% SINGLE PLAYER</span></div></div><div class="hero-art">${decorativeBlocks()}<div class="orbit-label"><span class="status-dot"></span> LESS THINKING. MORE FLOW.</div><span class="art-coordinate">X: 010 / Y: 020</span></div></section><section class="play-section"><div class="section-heading"><h2>Choose your rhythm<span> / SOLO PLAY</span></h2><button class="text-btn" id="how">How to play ↗</button></div><div class="modes">${Object.entries(modes).map(([id,m])=>`<button class="mode ${selected===id?'selected':''}" data-mode="${id}"><div class="mode-top"><span class="mode-icon">${m.icon}</span><span class="mode-tag">${m.tag}</span><span class="radio"></span></div><h3>${m.name}</h3><p>${m.desc}</p></button>`).join('')}</div><div class="launch-row"><button class="start-btn" id="start">LET’S PLAY <span>↗</span></button><span class="launch-hint">${modes[selected].name} selected<span>Press Enter to drop in</span></span><div class="secondary-actions"><button id="customize">☷ <span>Make it yours</span></button><button id="records">↗ <span>Your records</span></button></div></div></section>`;document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(b=>b.onclick=()=>{selected=b.dataset.mode as Mode;menu();});document.querySelector('#start')!.addEventListener('click',start);document.querySelector('#customize')!.addEventListener('click',customize);document.querySelector('#how')!.addEventListener('click',help);document.querySelector('#records')!.addEventListener('click',showRecords);}
-function modal(title:string,content:string){if(screen==='game'&&!paused)pause();document.querySelector('.modal-shade')?.remove();const shade=document.createElement('div');shade.className='modal-shade';shade.innerHTML=`<section class="modal" role="dialog" aria-modal="true" aria-label="${title}"><div class="modal-heading"><h2>${title}</h2><button class="icon-btn" id="close-modal" aria-label="Close dialog">×</button></div>${content}</section>`;const previous=document.activeElement as HTMLElement;app.append(shade);const close=()=>{shade.remove();previous?.focus();};shade.querySelector('#close-modal')!.addEventListener('click',close);shade.addEventListener('click',e=>{if(e.target===shade)close();});shade.addEventListener('keydown',e=>{if(e.key==='Escape'){e.stopPropagation();close();}if(e.key==='Tab'){const list=[...shade.querySelectorAll<HTMLElement>('button,input,select,a')];const first=list[0],end=list[list.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();end.focus();}else if(!e.shiftKey&&document.activeElement===end){e.preventDefault();first.focus();}}});(shade.querySelector('button') as HTMLElement).focus();}
-function help(){modal('A few good moves.',`<p class="modal-intro">Fill a horizontal line to clear it. Keep your stack below the top. Clear four lines at once for the biggest score.</p><div class="controls-list">${[['← →','Move left / right'],['↑ / X','Rotate clockwise'],['Z','Rotate counterclockwise'],['↓','Soft drop'],['Space','Hard drop'],['C / Shift','Hold a piece'],['Esc / P','Pause & resume']].map(([k,v])=>`<div><kbd>${k}</kbd><span>${v}</span></div>`).join('')}</div><p class="fine-print">Use the on-screen controls on touch devices. Hold swaps once per piece. The outlined ghost shows where your piece will land. Zen keeps a gentle fixed speed; reaching the top still ends a run.</p>`);}
-function customize(){modal('Make it yours.',`<p class="modal-intro">Your space. Your pace. Saved automatically on this device.</p><label class="setting-title" for="palette">BLOCK PALETTE</label><select id="palette"><option value="citrus">Citrus studio</option><option value="neon">Neon nights</option><option value="mono">Soft monochrome</option></select><div class="palette-preview">${palettes[settings.theme].map(c=>`<i style="background:${c}"></i>`).join('')}</div>${[['depth','Sculpted 3D blocks'],['ghost','Landing ghost'],['motion','Ambient motion']].map(([id,label])=>`<label class="setting-row">${label}<input type="checkbox" id="${id}" ${settings[id as 'depth']?'checked':''}></label>`).join('')}${[['music','Original synth soundtrack'],['effects','Game sounds']].map(([id,label])=>`<label class="range-row" for="${id}"><span>${label}<output id="${id}-value">${settings[id as 'music']}%</output></span><input type="range" id="${id}" min="0" max="100" value="${settings[id as 'music']}"></label>`).join('')}`);const select=document.querySelector<HTMLSelectElement>('#palette')!;select.value=settings.theme;select.onchange=()=>{settings.theme=select.value as Settings['theme'];save();document.querySelector('.palette-preview')!.innerHTML=palettes[settings.theme].map(c=>`<i style="background:${c}"></i>`).join('');draw();};for(const id of ['depth','ghost','motion'] as const)document.querySelector<HTMLInputElement>('#'+id)!.onchange=e=>{settings[id]=(e.target as HTMLInputElement).checked;apply();save();draw();};for(const id of ['music','effects'] as const)document.querySelector<HTMLInputElement>('#'+id)!.oninput=async e=>{settings[id]=Number((e.target as HTMLInputElement).value);document.querySelector('#'+id+'-value')!.textContent=settings[id]+'%';apply();save();await sound.unlock();if(screen==='menu'&&!sound.timer)sound.start();};}
-function time(ms:number){return `${Math.floor(ms/60000).toString().padStart(2,'0')}:${Math.floor(ms/1000%60).toString().padStart(2,'0')}`;}
-function showRecords(){modal('Your personal best.',`<p class="modal-intro">Every run leaves a mark. Your best completed runs, stored on this device.</p>${Object.entries(modes).map(([id,m])=>{const runs=records.filter(r=>r.mode===id).sort((a,b)=>id==='sprint'?a.time-b.time:b.score-a.score);return `<div class="record-row"><span>${m.icon} &nbsp; ${m.name}</span><strong>${runs.length?(id==='sprint'?time(runs[0].time):runs[0].score.toLocaleString()):'—'}</strong></div>`;}).join('')}<p class="fine-print">Sprint records require clearing 40 lines. Other modes save when the run ends. Scores are local, with no account required.</p>`);}
-async function start(){await sound.unlock();sound.start();screen='game';game=new Game(selected);paused=false;ended=false;gravity=0;grounded=0;lockResets=0;keys.clear();shell();document.querySelector('#main')!.innerHTML=`<section class="game-heading"><div><span class="eyebrow">FIND YOUR FLOW</span><h2>${modes[selected].name}<span>${modes[selected].tag}</span></h2></div><div><button class="text-btn" id="game-settings">Customize</button><button class="outline-btn" id="pause">Ⅱ Pause</button></div></section><section class="game-layout"><aside class="game-side left-side"><div class="stat-box"><span>HOLD <kbd>C</kbd></span><canvas id="hold" width="140" height="90" aria-label="Held piece"></canvas></div><div class="stat-box"><span>BEST ${selected==='sprint'?'TIME':'SCORE'}</span><strong id="best">${best()}</strong></div><div class="side-note"><span>STAY IN THE MOMENT.</span><p>Everything falls<br>into place.</p></div></aside><div class="board-frame"><canvas id="board" width="600" height="1200" aria-label="Game board: 10 columns and 20 rows"></canvas><div id="overlay"></div><div id="clear-toast" aria-live="polite"></div></div><aside class="game-side"><div class="stat-box score-box"><span>SCORE</span><strong id="score">0</strong></div><div class="stat-pair"><div class="stat-box"><span>LINES</span><strong id="lines">0</strong></div><div class="stat-box"><span>LEVEL</span><strong id="level">1</strong></div></div><div class="stat-box"><span>${selected==='ultra'?'TIME LEFT':'TIME'}</span><strong id="time">00:00</strong></div><div class="stat-box"><span>UP NEXT</span><canvas id="next" width="140" height="260" aria-label="Next three pieces"></canvas></div></aside></section><div class="touch-controls" aria-label="Touch controls">${[['hold','HOLD'],['left','←'],['rotate','↻'],['right','→'],['down','↓'],['drop','DROP']].map(([action,label])=>`<button data-action="${action}" aria-label="${action}">${label}</button>`).join('')}</div><div class="game-controls"><span><kbd>← →</kbd> move</span><span><kbd>↑</kbd> rotate</span><span><kbd>SPACE</kbd> drop</span><span><kbd>C</kbd> hold</span><button class="text-btn" id="game-help">All controls ↗</button></div>`;document.querySelector('#pause')!.addEventListener('click',pause);document.querySelector('#game-settings')!.addEventListener('click',customize);document.querySelector('#game-help')!.addEventListener('click',help);document.querySelectorAll<HTMLButtonElement>('[data-action]').forEach(b=>{b.addEventListener('pointerdown',e=>{e.preventDefault();b.setPointerCapture(e.pointerId);action(b.dataset.action!);if(['left','right','down'].includes(b.dataset.action!))keys.set(b.dataset.action!,performance.now());});for(const event of ['pointerup','pointercancel','lostpointercapture'])b.addEventListener(event,()=>keys.delete(b.dataset.action!));});draw();}
-function best(){const r=records.filter(r=>r.mode===selected).sort((a,b)=>selected==='sprint'?a.time-b.time:b.score-a.score)[0];return r?(selected==='sprint'?time(r.time):r.score.toLocaleString()):'—';}
-function pause(){if(!game||game.over||screen!=='game')return;paused=!paused;keys.clear();sound.stop();if(!paused)sound.start();document.querySelector('#pause')!.textContent=paused?'▶ Resume':'Ⅱ Pause';document.querySelector('#overlay')!.innerHTML=paused?`<div class="board-overlay"><span class="eyebrow">TAKE YOUR TIME</span><h2>Good things<br>can wait.</h2><button class="start-btn" id="resume">RESUME ↗</button><button class="text-btn" id="exit">End run & return to menu</button></div>`:'';document.querySelector('#resume')?.addEventListener('click',pause);document.querySelector('#exit')?.addEventListener('click',menu);}
-function finish(){if(ended||!game)return;ended=true;sound.stop();if(selected!=='sprint'||game.won){records.push({mode:selected,score:game.score,lines:game.lines,time:game.elapsed,date:new Date().toISOString()});records=records.sort((a,b)=>a.mode===b.mode?(a.mode==='sprint'?a.time-b.time:b.score-a.score):a.mode.localeCompare(b.mode)).filter((r,i,all)=>all.slice(0,i).filter(a=>a.mode===r.mode).length<25);save();}document.querySelector('#overlay')!.innerHTML=`<div class="board-overlay"><span class="eyebrow">${game.won?'BEAUTIFULLY DONE':'THAT WAS A GOOD RUN'}</span><h2>${game.won?'In the flow.':'One more?'}</h2><p>${game.score.toLocaleString()} points · ${game.lines} lines<br>${time(game.elapsed)}</p><button class="start-btn" id="again">PLAY AGAIN ↗</button><button class="text-btn" id="exit">Back to menu</button></div>`;document.querySelector('#again')!.addEventListener('click',start);document.querySelector('#exit')!.addEventListener('click',menu);}
-function action(name:string){if(!game||paused||game.over||screen!=='game'||document.querySelector('.modal-shade'))return;let changed=false;const wasGrounded=game.collides({...game.piece,y:game.piece.y+1});if(name==='left')changed=game.move(-1);if(name==='right')changed=game.move(1);if(name==='down'){changed=game.move(0,1);if(changed)game.score++;}if(name==='rotate')changed=game.rotate();if(name==='counter')changed=game.rotate(-1);if(name==='hold'){changed=game.hold();if(changed){grounded=0;gravity=0;lockResets=0;}}if(name==='drop'){const n=game.drop();afterLock(n);changed=true;}if(changed){if(wasGrounded&&['left','right','rotate','counter'].includes(name)&&lockResets<15){grounded=0;lockResets++;}sound.fx(name==='drop'?'drop':name==='rotate'?'rotate':'move');draw();}if(game.over)finish();}
-function afterLock(n:number){grounded=0;gravity=0;lockResets=0;if(n){sound.fx('clear');const el=document.querySelector('#clear-toast')!;el.textContent=['','SINGLE +','DOUBLE ++','TRIPLE +++','FOUR LINES ✳'][n];el.classList.remove('show');void (el as HTMLElement).offsetWidth;el.classList.add('show');}}
-function block(ctx:CanvasRenderingContext2D,x:number,y:number,size:number,color:string,ghost=false){const gap=size*.045;ctx.save();if(ghost){ctx.strokeStyle=color;ctx.globalAlpha=.45;ctx.lineWidth=1.5;ctx.strokeRect(x+gap+1,y+gap+1,size-gap*2-2,size-gap*2-2);ctx.restore();return;}ctx.fillStyle=color;ctx.beginPath();ctx.roundRect(x+gap,y+gap,size-gap*2,size-gap*2,size*.08);ctx.fill();if(settings.depth){ctx.fillStyle='#ffffff40';ctx.beginPath();ctx.moveTo(x+gap,y+gap);ctx.lineTo(x+size-gap,y+gap);ctx.lineTo(x+size*.82,y+size*.2);ctx.lineTo(x+size*.18,y+size*.2);ctx.closePath();ctx.fill();ctx.fillStyle='#00000030';ctx.beginPath();ctx.moveTo(x+size-gap,y+gap);ctx.lineTo(x+size-gap,y+size-gap);ctx.lineTo(x+gap,y+size-gap);ctx.lineTo(x+size*.18,y+size*.8);ctx.lineTo(x+size*.82,y+size*.8);ctx.lineTo(x+size*.82,y+size*.2);ctx.closePath();ctx.fill();ctx.fillStyle='#ffffff12';ctx.fillRect(x+size*.2,y+size*.2,size*.6,size*.6);}ctx.restore();}
-function draw(){if(!game||screen!=='game')return;const canvas=document.querySelector<HTMLCanvasElement>('#board');if(!canvas)return;const c=canvas.getContext('2d')!;const s=60;c.clearRect(0,0,600,1200);c.fillStyle='#131916';c.fillRect(0,0,600,1200);c.strokeStyle='#ffffff07';c.lineWidth=1;for(let x=0;x<=10;x++){c.beginPath();c.moveTo(x*s,0);c.lineTo(x*s,1200);c.stroke();}for(let y=0;y<=20;y++){c.beginPath();c.moveTo(0,y*s);c.lineTo(600,y*s);c.stroke();}const colors=palettes[settings.theme];game.board.forEach((r,y)=>r.forEach((v,x)=>{if(v)block(c,x*s,y*s,s,colors[v-1]);}));const paint=(p:Piece,ghost=false)=>p.cells.forEach((r,y)=>r.forEach((v,x)=>{if(v)block(c,(p.x+x)*s,(p.y+y)*s,s,colors[p.id],ghost);}));if(!game.over){if(settings.ghost)paint(game.ghost(),true);paint(game.piece);}for(const [id,ids] of [['hold',game.held===null?[]:[game.held]],['next',game.queue.slice(0,3)]] as [string,number[]][]){const cv=document.querySelector<HTMLCanvasElement>('#'+id)!;const ct=cv.getContext('2d')!;ct.clearRect(0,0,cv.width,cv.height);ids.forEach((v,i)=>{const a=SHAPES[v];a.forEach((r,y)=>r.forEach((value,x)=>{if(value)block(ct,(140-a[0].length*25)/2+x*25,i*83+20+y*25,25,colors[v]);}));});}document.querySelector('#score')!.textContent=game.score.toLocaleString();document.querySelector('#lines')!.textContent=game.lines+(selected==='sprint'?' / 40':'');document.querySelector('#level')!.textContent=String(game.level);document.querySelector('#time')!.textContent=time(selected==='ultra'?120000-game.elapsed:game.elapsed);}
-const bindings:Record<string,string>={ArrowLeft:'left',ArrowRight:'right',ArrowDown:'down',ArrowUp:'rotate',x:'rotate',z:'counter',c:'hold',Shift:'hold',' ':'drop'};
-window.addEventListener('keydown',e=>{if(document.querySelector('.modal-shade'))return;if(screen==='menu'&&e.key==='Enter'&&!(document.activeElement instanceof HTMLButtonElement)){e.preventDefault();start();return;}if(screen!=='game')return;if(['Escape','p','P'].includes(e.key)){e.preventDefault();if(!e.repeat)pause();return;}const a=bindings[e.key]??bindings[e.key.toLowerCase()];if(a){e.preventDefault();if(!e.repeat){action(a);if(['left','right','down'].includes(a))keys.set(a,performance.now());}}});window.addEventListener('keyup',e=>keys.delete(bindings[e.key]));window.addEventListener('blur',()=>{keys.clear();if(game&&!paused&&!game.over)pause();});document.addEventListener('visibilitychange',()=>{if(document.hidden){keys.clear();sound.stop();if(game&&!paused&&!game.over)pause();}});
-function loop(now:number){const dt=Math.min(now-last,100);last=now;if(game&&!paused&&!game.over&&screen==='game'){game.tick(dt);gravity+=dt;if(gravity>=game.speed){game.move(0,1);gravity=0;}if(game.collides({...game.piece,y:game.piece.y+1})){grounded+=dt;if(grounded>=500)afterLock(game.lock());}else grounded=0;if(now-lastRepeat>45){keys.forEach((since,key)=>{if(now-since>160)action(key);});lastRepeat=now;}draw();if(game.over)finish();}requestAnimationFrame(loop);}
-menu();requestAnimationFrame(loop);
+const logo =
+  '<span class="mark"><i></i><i></i><i></i></span><span>AFTERDROP<span class="logo-dot">®</span></span>';
+function shell() {
+  app.innerHTML = `<header><a class="brand" href="#" aria-label="Afterdrop home">${logo}</a><span class="header-note">A LITTLE ORDER. A LITTLE CHAOS.</span><button class="icon-btn" id="sound-toggle" aria-label="Toggle music">${settings.music ? "♫" : "♪"}</button></header><main id="main"></main><footer><span><i class="status-dot"></i> BUILT FOR THE FLOW STATE</span><span>INDEPENDENT ARCADE <b> / </b> VOL. 001</span><a href="https://github.com/platret/afterdrop" target="_blank" rel="noreferrer">SOURCE ↗</a></footer>`;
+  document.querySelector(".brand")!.addEventListener("click", (e) => {
+    e.preventDefault();
+    if (game && !game.over && screen === "game") {
+      pause();
+      return;
+    }
+    menu();
+  });
+  document
+    .querySelector("#sound-toggle")!
+    .addEventListener("click", async () => {
+      settings.music = settings.music ? 0 : 35;
+      apply();
+      save();
+      await sound.unlock();
+      if (!sound.timer && !paused) sound.start();
+      document.querySelector("#sound-toggle")!.textContent = settings.music
+        ? "♫"
+        : "♪";
+    });
+}
+function decorativeBlocks() {
+  return (
+    '<div class="sculpture" aria-hidden="true">' +
+    [
+      [0, 2, 0],
+      [1, 2, 0],
+      [2, 2, 0],
+      [2, 1, 0],
+      [3, 3, 1],
+      [4, 3, 1],
+      [3, 4, 1],
+      [4, 4, 1],
+      [0, 4, 2],
+      [1, 4, 2],
+      [1, 5, 2],
+      [2, 5, 2],
+      [3, 0, 3],
+      [3, 1, 3],
+      [4, 1, 3],
+      [5, 1, 3],
+    ]
+      .map(
+        ([x, y, c]) =>
+          `<i class="sculpture-block color-${c}" style="--x:${x};--y:${y}"></i>`,
+      )
+      .join("") +
+    "</div>"
+  );
+}
+function menu() {
+  screen = "menu";
+  game = null;
+  paused = false;
+  keys.clear();
+  shell();
+  document.querySelector("#main")!.innerHTML =
+    `<section class="hero"><div class="hero-copy"><div class="eyebrow"><span class="small-line"></span> YOUR NEXT FAVORITE DISTRACTION</div><h1>Find your<br><em>flow.</em><span class="star">✳</span></h1><p>One more block. One more line.<br>A familiar feeling, in a whole new dimension.</p><div class="hero-meta"><span>01 — 04 GAME MODES</span><span>100% SINGLE PLAYER</span></div></div><div class="hero-art">${decorativeBlocks()}<div class="orbit-label"><span class="status-dot"></span> LESS THINKING. MORE FLOW.</div><span class="art-coordinate">X: 010 / Y: 020</span></div></section><section class="play-section"><div class="section-heading"><h2>Choose your rhythm<span> / SOLO PLAY</span></h2><button class="text-btn" id="how">How to play ↗</button></div><div class="modes">${Object.entries(
+      modes,
+    )
+      .map(
+        ([id, m]) =>
+          `<button class="mode ${selected === id ? "selected" : ""}" data-mode="${id}"><div class="mode-top"><span class="mode-icon">${m.icon}</span><span class="mode-tag">${m.tag}</span><span class="radio"></span></div><h3>${m.name}</h3><p>${m.desc}</p></button>`,
+      )
+      .join(
+        "",
+      )}</div><div class="launch-row"><button class="start-btn" id="start">LET’S PLAY <span>↗</span></button><span class="launch-hint">${modes[selected].name} selected<span>Press Enter to drop in</span></span><div class="secondary-actions"><button id="customize">☷ <span>Make it yours</span></button><button id="records">↗ <span>Your records</span></button></div></div></section>`;
+  document.querySelectorAll<HTMLButtonElement>("[data-mode]").forEach(
+    (b) =>
+      (b.onclick = () => {
+        selected = b.dataset.mode as Mode;
+        menu();
+      }),
+  );
+  document.querySelector("#start")!.addEventListener("click", start);
+  document.querySelector("#customize")!.addEventListener("click", customize);
+  document.querySelector("#how")!.addEventListener("click", help);
+  document.querySelector("#records")!.addEventListener("click", showRecords);
+}
+function modal(title: string, content: string) {
+  if (screen === "game" && !paused) pause();
+  document.querySelector(".modal-shade")?.remove();
+  const shade = document.createElement("div");
+  shade.className = "modal-shade";
+  shade.innerHTML = `<section class="modal" role="dialog" aria-modal="true" aria-label="${title}"><div class="modal-heading"><h2>${title}</h2><button class="icon-btn" id="close-modal" aria-label="Close dialog">×</button></div>${content}</section>`;
+  const previous = document.activeElement as HTMLElement;
+  app.append(shade);
+  const close = () => {
+    shade.remove();
+    previous?.focus();
+  };
+  shade.querySelector("#close-modal")!.addEventListener("click", close);
+  shade.addEventListener("click", (e) => {
+    if (e.target === shade) close();
+  });
+  shade.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      close();
+    }
+    if (e.key === "Tab") {
+      const list = [
+        ...shade.querySelectorAll<HTMLElement>("button,input,select,a"),
+      ];
+      const first = list[0],
+        end = list[list.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        end.focus();
+      } else if (!e.shiftKey && document.activeElement === end) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  });
+  (shade.querySelector("button") as HTMLElement).focus();
+}
+function help() {
+  modal(
+    "A few good moves.",
+    `<p class="modal-intro">Fill a horizontal line to clear it. Keep your stack below the top. Clear four lines at once for the biggest score.</p><div class="controls-list">${[
+      ["← →", "Move left / right"],
+      ["↑ / X", "Rotate clockwise"],
+      ["Z", "Rotate counterclockwise"],
+      ["↓", "Soft drop"],
+      ["Space", "Hard drop"],
+      ["C / Shift", "Hold a piece"],
+      ["Esc / P", "Pause & resume"],
+    ]
+      .map(([k, v]) => `<div><kbd>${k}</kbd><span>${v}</span></div>`)
+      .join(
+        "",
+      )}</div><p class="fine-print">Use the on-screen controls on touch devices. Hold swaps once per piece. The outlined ghost shows where your piece will land. Zen keeps a gentle fixed speed; reaching the top still ends a run.</p>`,
+  );
+}
+function customize() {
+  modal(
+    "Make it yours.",
+    `<p class="modal-intro">Your space. Your pace. Saved automatically on this device.</p><label class="setting-title" for="palette">BLOCK PALETTE</label><select id="palette"><option value="citrus">Citrus studio</option><option value="neon">Neon nights</option><option value="mono">Soft monochrome</option></select><div class="palette-preview">${palettes[settings.theme].map((c) => `<i style="background:${c}"></i>`).join("")}</div>${[
+      ["depth", "Sculpted 3D blocks"],
+      ["ghost", "Landing ghost"],
+      ["motion", "Ambient motion"],
+    ]
+      .map(
+        ([id, label]) =>
+          `<label class="setting-row">${label}<input type="checkbox" id="${id}" ${settings[id as "depth"] ? "checked" : ""}></label>`,
+      )
+      .join("")}${[
+      ["music", "Original synth soundtrack"],
+      ["effects", "Game sounds"],
+    ]
+      .map(
+        ([id, label]) =>
+          `<label class="range-row" for="${id}"><span>${label}<output id="${id}-value">${settings[id as "music"]}%</output></span><input type="range" id="${id}" min="0" max="100" value="${settings[id as "music"]}"></label>`,
+      )
+      .join("")}`,
+  );
+  const select = document.querySelector<HTMLSelectElement>("#palette")!;
+  select.value = settings.theme;
+  select.onchange = () => {
+    settings.theme = select.value as Settings["theme"];
+    save();
+    document.querySelector(".palette-preview")!.innerHTML = palettes[
+      settings.theme
+    ]
+      .map((c) => `<i style="background:${c}"></i>`)
+      .join("");
+    draw();
+  };
+  for (const id of ["depth", "ghost", "motion"] as const)
+    document.querySelector<HTMLInputElement>("#" + id)!.onchange = (e) => {
+      settings[id] = (e.target as HTMLInputElement).checked;
+      apply();
+      save();
+      draw();
+    };
+  for (const id of ["music", "effects"] as const)
+    document.querySelector<HTMLInputElement>("#" + id)!.oninput = async (e) => {
+      settings[id] = Number((e.target as HTMLInputElement).value);
+      document.querySelector("#" + id + "-value")!.textContent =
+        settings[id] + "%";
+      apply();
+      save();
+      await sound.unlock();
+      if (screen === "menu" && !sound.timer) sound.start();
+    };
+}
+function time(ms: number) {
+  return `${Math.floor(ms / 60000)
+    .toString()
+    .padStart(2, "0")}:${Math.floor((ms / 1000) % 60)
+    .toString()
+    .padStart(2, "0")}`;
+}
+function showRecords() {
+  modal(
+    "Your personal best.",
+    `<p class="modal-intro">Every run leaves a mark. Your best completed runs, stored on this device.</p>${Object.entries(
+      modes,
+    )
+      .map(([id, m]) => {
+        const runs = records
+          .filter((r) => r.mode === id)
+          .sort((a, b) =>
+            id === "sprint" ? a.time - b.time : b.score - a.score,
+          );
+        return `<div class="record-row"><span>${m.icon} &nbsp; ${m.name}</span><strong>${runs.length ? (id === "sprint" ? time(runs[0].time) : runs[0].score.toLocaleString()) : "—"}</strong></div>`;
+      })
+      .join(
+        "",
+      )}<p class="fine-print">Sprint records require clearing 40 lines. Other modes save when the run ends. Scores are local, with no account required.</p>`,
+  );
+}
+async function start() {
+  await sound.unlock();
+  sound.start();
+  screen = "game";
+  game = new Game(selected);
+  paused = false;
+  ended = false;
+  gravity = 0;
+  grounded = 0;
+  lockResets = 0;
+  keys.clear();
+  shell();
+  document.querySelector("#main")!.innerHTML =
+    `<section class="game-heading"><div><span class="eyebrow">FIND YOUR FLOW</span><h2>${modes[selected].name}<span>${modes[selected].tag}</span></h2></div><div><button class="text-btn" id="game-settings">Customize</button><button class="outline-btn" id="pause">Ⅱ Pause</button></div></section><section class="game-layout"><aside class="game-side left-side"><div class="stat-box"><span>HOLD <kbd>C</kbd></span><canvas id="hold" width="140" height="90" aria-label="Held piece"></canvas></div><div class="stat-box"><span>BEST ${selected === "sprint" ? "TIME" : "SCORE"}</span><strong id="best">${best()}</strong></div><div class="side-note"><span>STAY IN THE MOMENT.</span><p>Everything falls<br>into place.</p></div></aside><div class="board-frame"><canvas id="board" width="600" height="1200" aria-label="Game board: 10 columns and 20 rows"></canvas><div id="overlay"></div><div id="clear-toast" aria-live="polite"></div></div><aside class="game-side"><div class="stat-box score-box"><span>SCORE</span><strong id="score">0</strong></div><div class="stat-pair"><div class="stat-box"><span>LINES</span><strong id="lines">0</strong></div><div class="stat-box"><span>LEVEL</span><strong id="level">1</strong></div></div><div class="stat-box"><span>${selected === "ultra" ? "TIME LEFT" : "TIME"}</span><strong id="time">00:00</strong></div><div class="stat-box"><span>UP NEXT</span><canvas id="next" width="140" height="260" aria-label="Next three pieces"></canvas></div></aside></section><div class="touch-controls" aria-label="Touch controls">${[
+      ["hold", "HOLD"],
+      ["left", "←"],
+      ["rotate", "↻"],
+      ["right", "→"],
+      ["down", "↓"],
+      ["drop", "DROP"],
+    ]
+      .map(
+        ([action, label]) =>
+          `<button data-action="${action}" aria-label="${action}">${label}</button>`,
+      )
+      .join(
+        "",
+      )}</div><div class="game-controls"><span><kbd>← →</kbd> move</span><span><kbd>↑</kbd> rotate</span><span><kbd>SPACE</kbd> drop</span><span><kbd>C</kbd> hold</span><button class="text-btn" id="game-help">All controls ↗</button></div>`;
+  document.querySelector("#pause")!.addEventListener("click", pause);
+  document
+    .querySelector("#game-settings")!
+    .addEventListener("click", customize);
+  document.querySelector("#game-help")!.addEventListener("click", help);
+  document.querySelectorAll<HTMLButtonElement>("[data-action]").forEach((b) => {
+    b.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      b.setPointerCapture(e.pointerId);
+      action(b.dataset.action!);
+      if (["left", "right", "down"].includes(b.dataset.action!))
+        keys.set(b.dataset.action!, performance.now());
+    });
+    for (const event of ["pointerup", "pointercancel", "lostpointercapture"])
+      b.addEventListener(event, () => keys.delete(b.dataset.action!));
+  });
+  draw();
+}
+function best() {
+  const r = records
+    .filter((r) => r.mode === selected)
+    .sort((a, b) =>
+      selected === "sprint" ? a.time - b.time : b.score - a.score,
+    )[0];
+  return r
+    ? selected === "sprint"
+      ? time(r.time)
+      : r.score.toLocaleString()
+    : "—";
+}
+function pause() {
+  if (!game || game.over || screen !== "game") return;
+  paused = !paused;
+  keys.clear();
+  sound.stop();
+  if (!paused) sound.start();
+  document.querySelector("#pause")!.textContent = paused
+    ? "▶ Resume"
+    : "Ⅱ Pause";
+  document.querySelector("#overlay")!.innerHTML = paused
+    ? `<div class="board-overlay"><span class="eyebrow">TAKE YOUR TIME</span><h2>Good things<br>can wait.</h2><button class="start-btn" id="resume">RESUME ↗</button><button class="text-btn" id="exit">End run & return to menu</button></div>`
+    : "";
+  document.querySelector("#resume")?.addEventListener("click", pause);
+  document.querySelector("#exit")?.addEventListener("click", menu);
+}
+function finish() {
+  if (ended || !game) return;
+  ended = true;
+  sound.stop();
+  if (selected !== "sprint" || game.won) {
+    records.push({
+      mode: selected,
+      score: game.score,
+      lines: game.lines,
+      time: game.elapsed,
+      date: new Date().toISOString(),
+    });
+    records = records
+      .sort((a, b) =>
+        a.mode === b.mode
+          ? a.mode === "sprint"
+            ? a.time - b.time
+            : b.score - a.score
+          : a.mode.localeCompare(b.mode),
+      )
+      .filter(
+        (r, i, all) =>
+          all.slice(0, i).filter((a) => a.mode === r.mode).length < 25,
+      );
+    save();
+  }
+  document.querySelector("#overlay")!.innerHTML =
+    `<div class="board-overlay"><span class="eyebrow">${game.won ? "BEAUTIFULLY DONE" : "THAT WAS A GOOD RUN"}</span><h2>${game.won ? "In the flow." : "One more?"}</h2><p>${game.score.toLocaleString()} points · ${game.lines} lines<br>${time(game.elapsed)}</p><button class="start-btn" id="again">PLAY AGAIN ↗</button><button class="text-btn" id="exit">Back to menu</button></div>`;
+  document.querySelector("#again")!.addEventListener("click", start);
+  document.querySelector("#exit")!.addEventListener("click", menu);
+}
+function action(name: string) {
+  if (
+    !game ||
+    paused ||
+    game.over ||
+    screen !== "game" ||
+    document.querySelector(".modal-shade")
+  )
+    return;
+  let changed = false;
+  const wasGrounded = game.collides({ ...game.piece, y: game.piece.y + 1 });
+  if (name === "left") changed = game.move(-1);
+  if (name === "right") changed = game.move(1);
+  if (name === "down") {
+    changed = game.move(0, 1);
+    if (changed) game.score++;
+  }
+  if (name === "rotate") changed = game.rotate();
+  if (name === "counter") changed = game.rotate(-1);
+  if (name === "hold") {
+    changed = game.hold();
+    if (changed) {
+      grounded = 0;
+      gravity = 0;
+      lockResets = 0;
+    }
+  }
+  if (name === "drop") {
+    const n = game.drop();
+    afterLock(n);
+    changed = true;
+  }
+  if (changed) {
+    if (
+      wasGrounded &&
+      ["left", "right", "rotate", "counter"].includes(name) &&
+      lockResets < 15
+    ) {
+      grounded = 0;
+      lockResets++;
+    }
+    sound.fx(name === "drop" ? "drop" : name === "rotate" ? "rotate" : "move");
+    draw();
+  }
+  if (game.over) finish();
+}
+function afterLock(n: number) {
+  grounded = 0;
+  gravity = 0;
+  lockResets = 0;
+  if (n) {
+    sound.fx("clear");
+    const el = document.querySelector("#clear-toast")!;
+    el.textContent = [
+      "",
+      "SINGLE +",
+      "DOUBLE ++",
+      "TRIPLE +++",
+      "FOUR LINES ✳",
+    ][n];
+    el.classList.remove("show");
+    void (el as HTMLElement).offsetWidth;
+    el.classList.add("show");
+  }
+}
+function block(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  size: number,
+  color: string,
+  ghost = false,
+) {
+  const gap = size * 0.045;
+  ctx.save();
+  if (ghost) {
+    ctx.strokeStyle = color;
+    ctx.globalAlpha = 0.45;
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(
+      x + gap + 1,
+      y + gap + 1,
+      size - gap * 2 - 2,
+      size - gap * 2 - 2,
+    );
+    ctx.restore();
+    return;
+  }
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.roundRect(x + gap, y + gap, size - gap * 2, size - gap * 2, size * 0.08);
+  ctx.fill();
+  if (settings.depth) {
+    ctx.fillStyle = "#ffffff40";
+    ctx.beginPath();
+    ctx.moveTo(x + gap, y + gap);
+    ctx.lineTo(x + size - gap, y + gap);
+    ctx.lineTo(x + size * 0.82, y + size * 0.2);
+    ctx.lineTo(x + size * 0.18, y + size * 0.2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#00000030";
+    ctx.beginPath();
+    ctx.moveTo(x + size - gap, y + gap);
+    ctx.lineTo(x + size - gap, y + size - gap);
+    ctx.lineTo(x + gap, y + size - gap);
+    ctx.lineTo(x + size * 0.18, y + size * 0.8);
+    ctx.lineTo(x + size * 0.82, y + size * 0.8);
+    ctx.lineTo(x + size * 0.82, y + size * 0.2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#ffffff12";
+    ctx.fillRect(x + size * 0.2, y + size * 0.2, size * 0.6, size * 0.6);
+  }
+  ctx.restore();
+}
+function draw() {
+  if (!game || screen !== "game") return;
+  const canvas = document.querySelector<HTMLCanvasElement>("#board");
+  if (!canvas) return;
+  const c = canvas.getContext("2d")!;
+  const s = 60;
+  c.clearRect(0, 0, 600, 1200);
+  c.fillStyle = "#131916";
+  c.fillRect(0, 0, 600, 1200);
+  c.strokeStyle = "#ffffff07";
+  c.lineWidth = 1;
+  for (let x = 0; x <= 10; x++) {
+    c.beginPath();
+    c.moveTo(x * s, 0);
+    c.lineTo(x * s, 1200);
+    c.stroke();
+  }
+  for (let y = 0; y <= 20; y++) {
+    c.beginPath();
+    c.moveTo(0, y * s);
+    c.lineTo(600, y * s);
+    c.stroke();
+  }
+  const colors = palettes[settings.theme];
+  game.board.forEach((r, y) =>
+    r.forEach((v, x) => {
+      if (v) block(c, x * s, y * s, s, colors[v - 1]);
+    }),
+  );
+  const paint = (p: Piece, ghost = false) =>
+    p.cells.forEach((r, y) =>
+      r.forEach((v, x) => {
+        if (v) block(c, (p.x + x) * s, (p.y + y) * s, s, colors[p.id], ghost);
+      }),
+    );
+  if (!game.over) {
+    if (settings.ghost) paint(game.ghost(), true);
+    paint(game.piece);
+  }
+  for (const [id, ids] of [
+    ["hold", game.held === null ? [] : [game.held]],
+    ["next", game.queue.slice(0, 3)],
+  ] as [string, number[]][]) {
+    const cv = document.querySelector<HTMLCanvasElement>("#" + id)!;
+    const ct = cv.getContext("2d")!;
+    ct.clearRect(0, 0, cv.width, cv.height);
+    ids.forEach((v, i) => {
+      const a = SHAPES[v];
+      a.forEach((r, y) =>
+        r.forEach((value, x) => {
+          if (value)
+            block(
+              ct,
+              (140 - a[0].length * 25) / 2 + x * 25,
+              i * 83 + 20 + y * 25,
+              25,
+              colors[v],
+            );
+        }),
+      );
+    });
+  }
+  document.querySelector("#score")!.textContent = game.score.toLocaleString();
+  document.querySelector("#lines")!.textContent =
+    game.lines + (selected === "sprint" ? " / 40" : "");
+  document.querySelector("#level")!.textContent = String(game.level);
+  document.querySelector("#time")!.textContent = time(
+    selected === "ultra" ? 120000 - game.elapsed : game.elapsed,
+  );
+}
+const bindings: Record<string, string> = {
+  ArrowLeft: "left",
+  ArrowRight: "right",
+  ArrowDown: "down",
+  ArrowUp: "rotate",
+  x: "rotate",
+  z: "counter",
+  c: "hold",
+  Shift: "hold",
+  " ": "drop",
+};
+window.addEventListener("keydown", (e) => {
+  if (document.querySelector(".modal-shade")) return;
+  if (
+    screen === "menu" &&
+    e.key === "Enter" &&
+    !(document.activeElement instanceof HTMLButtonElement)
+  ) {
+    e.preventDefault();
+    start();
+    return;
+  }
+  if (screen !== "game") return;
+  if (["Escape", "p", "P"].includes(e.key)) {
+    e.preventDefault();
+    if (!e.repeat) pause();
+    return;
+  }
+  const a = bindings[e.key] ?? bindings[e.key.toLowerCase()];
+  if (a) {
+    e.preventDefault();
+    if (!e.repeat) {
+      action(a);
+      if (["left", "right", "down"].includes(a)) keys.set(a, performance.now());
+    }
+  }
+});
+window.addEventListener("keyup", (e) => keys.delete(bindings[e.key]));
+window.addEventListener("blur", () => {
+  keys.clear();
+  if (game && !paused && !game.over) pause();
+});
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    keys.clear();
+    sound.stop();
+    if (game && !paused && !game.over) pause();
+  }
+});
+function loop(now: number) {
+  const dt = Math.min(now - last, 100);
+  last = now;
+  if (game && !paused && !game.over && screen === "game") {
+    game.tick(dt);
+    gravity += dt;
+    if (gravity >= game.speed) {
+      game.move(0, 1);
+      gravity = 0;
+    }
+    if (game.collides({ ...game.piece, y: game.piece.y + 1 })) {
+      grounded += dt;
+      if (grounded >= 500) afterLock(game.lock());
+    } else grounded = 0;
+    if (now - lastRepeat > 45) {
+      keys.forEach((since, key) => {
+        if (now - since > 160) action(key);
+      });
+      lastRepeat = now;
+    }
+    draw();
+    if (game.over) finish();
+  }
+  requestAnimationFrame(loop);
+}
+menu();
+requestAnimationFrame(loop);
